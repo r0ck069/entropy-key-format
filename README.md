@@ -1,13 +1,6 @@
 # Entropy Key Format — da entropia grezza a materiale per chiavi
 
-> ⚠ **v1.0.0-beta2 — BETA  pubblicata su GitHub.** Due giri di
-> audit esterno indipendente: il primo ha trovato solo rilievi documentali;
-> il secondo, più approfondito (Montgomery ladder X25519 eseguita
-> end-to-end, tabelle FIPS 186-4 citate con numeri esatti), ha confermato
-> nessun difetto critico/alto e portato a una whitelist esplicita sulle
-> dimensioni RSA consentite e a un tetto sulla dimensione dell'IKM. Dettaglio
-> completo in `CHANGELOG.md`. Vedi `SECURITY-NOTES.md` per i principi di
-> design.
+> ⚠ **v1.0.0-beta2 — BETA  pubblicata su GitHub.** 
 
 Quinto tool della stessa serie (EntropyPipeline / entropy-extractor /
 entropy-extractor-raw-2photo / entropy-crosscheck). Colma il gap più

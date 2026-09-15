@@ -1,6 +1,6 @@
 # Entropy Key Format — da entropia grezza a materiale per chiavi
 
-> ⚠ **v1.0.0-beta2 — BETA non ancora pubblicata su GitHub.** Due giri di
+> ⚠ **v1.0.0-beta2 — BETA  pubblicata su GitHub.** Due giri di
 > audit esterno indipendente: il primo ha trovato solo rilievi documentali;
 > il secondo, più approfondito (Montgomery ladder X25519 eseguita
 > end-to-end, tabelle FIPS 186-4 citate con numeri esatti), ha confermato

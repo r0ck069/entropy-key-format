@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Entropy Key Format — da entropia grezza a materiale per chiavi (v1.0.0-beta2)</title>
+<style>
+:root{
+  --bg:#f5f5f5; --card:#ffffff; --border:#ddd; --text:#222; --muted:#666;
+  --ok-bg:#e8f5e9; --ok-fg:#2e7d32;
+  --warn-bg:#fff3e0; --warn-fg:#e65100;
+  --fail-bg:#ffebee; --fail-fg:#c62828;
+  --neutral-bg:#fafafa; --neutral-fg:#666;
+  --mono:"Ubuntu Mono","DejaVu Sans Mono",monospace;
+  --sans:"Ubuntu","Helvetica Neue",Arial,sans-serif;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);padding:16px 12px 60px;}
+h1{font-size:1.15rem;margin:4px 0 2px;}
+.subtitle{color:var(--muted);font-size:.85rem;margin:0 0 14px;}
+.card{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:14px 14px 16px;margin-bottom:14px;}
+.card h2{font-size:.95rem;margin:0 0 10px;display:flex;align-items:center;gap:8px;}
+.card h2 .badge{font-size:.7rem;font-weight:normal;background:var(--neutral-bg);color:var(--neutral-fg);border-radius:10px;padding:2px 8px;}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;align-items:center;}
+button{background:#37474f;color:#fff;border:none;border-radius:5px;padding:8px 14px;font-size:.85rem;cursor:pointer;font-family:var(--sans);}
+button:hover{background:#263238;}
+button:disabled{background:#c8c8c8;cursor:not-allowed;}
+input[type=text], textarea, select{
+  font-family:var(--mono);font-size:.82rem;border:1px solid var(--border);border-radius:4px;
+  padding:6px 8px;width:100%;background:#fcfcfc;
+}
+select{width:auto;display:inline-block;}
+textarea{resize:vertical;min-height:70px;}
+.status{font-family:var(--mono);font-size:.78rem;padding:8px;border-radius:4px;white-space:pre-wrap;line-height:1.5;word-break:break-all;}
+.status.ok{background:var(--ok-bg);color:var(--ok-fg);}
+.status.warn{background:var(--warn-bg);color:var(--warn-fg);}
+.status.fail{background:var(--fail-bg);color:var(--fail-fg);}
+.status.neutral{background:var(--neutral-bg);color:var(--neutral-fg);}
+.out-box{font-family:var(--mono);font-size:.72rem;background:#fafafa;border:1px solid var(--border);border-radius:4px;padding:8px;word-break:break-all;max-height:160px;overflow:auto;}
+.log-box{font-family:var(--mono);font-size:.68rem;background:#111;color:#8bc34a;border-radius:4px;padding:8px;max-height:180px;overflow:auto;white-space:pre-wrap;}
+.warning-banner{background:#fff3e0;border:1px solid #ffb74d;color:#7a4a00;border-radius:6px;padding:10px 12px;font-size:.8rem;margin-bottom:14px;line-height:1.5;}
+small.note{color:var(--muted);display:block;margin-top:6px;font-size:.72rem;}
+</style>
+</head>
+<body>
+<h1>Entropy Key Format</h1>
+<p class="subtitle">
+  Standalone, offline, zero dipendenze esterne. Quinto tool della stessa serie
+  (EntropyPipeline / entropy-extractor / entropy-extractor-raw-2photo / entropy-crosscheck):
+  prende l'output finale di uno degli altri tre e lo trasforma, via HKDF (RFC 5869), nel
+  materiale grezzo giusto per AES-256, HMAC-SHA256, seed X25519/Ed25519, o coppie di primi RSA.<br>
+  Build <b>1.0.0-beta2</b> (2026-09-15) — <b>BETA NON AUDITATA</b>, non ancora pubblicata su GitHub.
+  Changelog completo: <code>CHANGELOG.md</code>. Principi di sicurezza: <code>SECURITY-NOTES.md</code>.
+</p>
+
+<div class="warning-banner">
+  ⚠ <b>Non costruisce chiavi finite.</b> Consegna materiale grezzo (byte, scalari, numeri
+  primi) da importare in una libreria crittografica vera (OpenSSL, libsodium, age, GPG) —
+  non genera mai file PEM/DER/PKCS#8, non calcola chiavi pubbliche su curva ellittica, non
+  completa mai da solo una chiave RSA. Dettagli completi in <code>SECURITY-NOTES.md</code>.<br>
+  ⚠ Nessuno dei 5 tool della serie ha ricevuto un audit crittografico indipendente da terzi.
+</div>
+
+<!-- INGRESSO + ESTRAZIONE -->
+<div class="card">
+  <h2>Ingresso <span class="badge">output finale di uno degli altri tool, min 256 bit</span></h2>
+  <p style="font-size:.8rem;color:var(--muted);margin:-4px 0 10px;">
+    Incolla qui l'output finale (bit sequenziali o esadecimale) di EntropyPipeline,
+    entropy-extractor o entropy-extractor-raw-2photo. Formati accettati: binario (0/1),
+    esadecimale, o lista di byte.
+  </p>
+  <textarea id="ikmInput" placeholder="Incolla qui l'output finale (IKM) — minimo 256 bit"></textarea>
+  <label style="font-size:.78rem;color:var(--muted);margin-top:8px;display:block;">Salt HKDF (opzionale, esadecimale — vuoto = default RFC 5869, 32 byte a zero):</label>
+  <textarea id="saltInput" placeholder="vuoto = default RFC 5869" style="min-height:40px;"></textarea>
+  <div class="row" style="margin-top:8px;">
+    <button id="btnExtract">Estrai PRK (HKDF-Extract)</button>
+  </div>
+  <div id="ikmStatus" class="status neutral" style="margin-top:8px;">In attesa dell'output di uno dei tool di estrazione…</div>
+</div>
+
+<!-- CHIAVI SIMMETRICHE -->
+<div class="card">
+  <h2>Chiavi simmetriche <span class="badge">AES-256 · HMAC-SHA256</span></h2>
+  <div class="row"><button id="btnDeriveSymmetric" disabled>Deriva chiavi simmetriche</button></div>
+  <div id="symmetricArea" class="status neutral">In attesa della PRK…</div>
+</div>
+
+<!-- CURVE ELLITTICHE -->
+<div class="card">
+  <h2>Seed per curve ellittiche <span class="badge">X25519 (clamped) · Ed25519 (seed grezzo)</span></h2>
+  <p style="font-size:.8rem;color:var(--muted);margin:-4px 0 10px;">
+    Il tool si ferma al seed/scalare — la moltiplicazione sulla curva per ottenere la
+    chiave pubblica va fatta con una libreria vera (libsodium, OpenSSL), mai qui.
+  </p>
+  <div class="row">
+    <button id="btnDeriveX25519" disabled>Deriva seed X25519</button>
+    <button id="btnDeriveEd25519" disabled>Deriva seed Ed25519</button>
+  </div>
+  <div id="x25519Area" class="status neutral">In attesa della PRK…</div>
+  <div id="ed25519Area" class="status neutral" style="margin-top:8px;">In attesa della PRK…</div>
+</div>
+
+<!-- RSA -->
+<div class="card">
+  <h2>Primi per RSA <span class="badge">Miller-Rabin, 40 round</span></h2>
+  <p style="font-size:.8rem;color:var(--muted);margin:-4px 0 10px;">
+    Genera p e q. Il tool NON calcola φ(n), non sceglie l'esponente e, non calcola d —
+    porta questi due primi in OpenSSL o nella libreria RSA di tua fiducia per completare
+    la chiave. Dimensioni maggiori richiedono più tempo (mostrato un avviso di calcolo in corso).
+  </p>
+  <div class="row">
+    <label style="font-size:.82rem;">Dimensione modulo:
+      <select id="rsaBitsSelect">
+        <option value="2048" selected>RSA-2048 (primi da 1024 bit, veloce)</option>
+        <option value="3072">RSA-3072 (primi da 1536 bit, qualche secondo)</option>
+        <option value="4096">RSA-4096 (primi da 2048 bit, può richiedere ~20s)</option>
+      </select>
+    </label>
+    <button id="btnGenRsa" disabled>Genera p, q</button>
+  </div>
+  <div id="rsaArea" class="status neutral">In attesa della PRK…</div>
+</div>
+
+<!-- INTEGRITÀ -->
+<div class="card">
+  <h2>Integrità dell'applicazione <span class="badge">controllo diagnostico</span></h2>
+  <p style="font-size:.8rem;color:var(--muted);margin:-2px 0 8px;">SHA-256 del blocco &lt;script&gt; core, calcolato al caricamento.</p>
+  <div id="coreFingerprint" class="out-box">calcolo…</div>
+</div>
+
+<!-- AUTOTEST -->
+<div class="card">
+  <h2>Autotest all'avvio <span class="badge">verifica di regressione</span></h2>
+  <div id="selfTestArea" class="status neutral">Esecuzione in corso…</div>
+</div>
+
+<!-- LOG -->
+<div class="card">
+  <h2>Log sessione (solo RAM — nessuna scrittura su disco)</h2>
+  <div id="logBox" class="log-box"></div>
+</div>
+
+<script id="core-script">
+"use strict";
+"use strict";
+
+/* ============================== HMAC-SHA256 (nativo, via SubtleCrypto) ============================== */
+async function hmacSha256(keyBytes, dataBytes){
+  const key = await crypto.subtle.importKey('raw', keyBytes, {name:'HMAC', hash:'SHA-256'}, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, dataBytes);
+  return new Uint8Array(sig);
+}
+
+/* ============================== HKDF (RFC 5869) ============================== */
+async function hkdfExtract(salt, ikm){
+  const saltBytes = (salt && salt.length>0) ? salt : new Uint8Array(32);
+  return await hmacSha256(saltBytes, ikm);
+}
+async function hkdfExpand(prk, info, length){
+  const hashLen = 32;
+  const n = Math.ceil(length/hashLen);
+  if(n > 255) throw new Error('HKDF: lunghezza richiesta troppo grande (max 255*32 byte)');
+  const okm = new Uint8Array(n*hashLen);
+  let prevT = new Uint8Array(0);
+  for(let i=1;i<=n;i++){
+    const input = new Uint8Array(prevT.length + info.length + 1);
+    input.set(prevT,0);
+    input.set(info, prevT.length);
+    input[prevT.length+info.length] = i;
+    const ti = await hmacSha256(prk, input);
+    okm.set(ti, (i-1)*hashLen);
+    prevT = ti;
+  }
+  return okm.slice(0, length);
+}
+async function hkdf(ikm, salt, info, length){
+  const prk = await hkdfExtract(salt, ikm);
+  const okm = await hkdfExpand(prk, info, length);
+  return { prk, okm };
+}
+
+/* ============================== CLAMPING X25519 (RFC 7748 §5) ============================== */
+function clampX25519(bytes32){
+  if(bytes32.length !== 32) throw new Error('clampX25519: servono esattamente 32 byte');
+  const out = new Uint8Array(bytes32);
+  out[0] &= 248;
+  out[31] &= 127;
+  out[31] |= 64;
+  return out;
+}
+
+/* ============================== MILLER-RABIN (BigInt nativo) ============================== */
+const SMALL_PRIMES = [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97,101,103,107,109,113];
+function trialDivision(n){
+  for(const p of SMALL_PRIMES){
+    const bp = BigInt(p);
+    if(n === bp) return true;   // il piccolo primo stesso
+    if(n % bp === 0n) return false;
+  }
+  return null; // indeterminato, serve Miller-Rabin
+}
+function modPow(base, exp, mod){
+  base = base % mod;
+  let result = 1n;
+  while(exp > 0n){
+    if(exp & 1n) result = (result*base) % mod;
+    exp >>= 1n;
+    base = (base*base) % mod;
+  }
+  return result;
+}
+function millerRabinRound(n, a){
+  let d = n-1n, r=0n;
+  while(d % 2n === 0n){ d/=2n; r++; }
+  let x = modPow(a, d, n);
+  if(x === 1n || x === n-1n) return true;
+  for(let i=0n;i<r-1n;i++){
+    x = (x*x)%n;
+    if(x === n-1n) return true;
+  }
+  return false;
+}
+function randomBigIntInRange(min, max){
+  // Intero casuale CSPRNG uniforme in [min, max] (inclusi), via rifiuto per
+  // evitare bias di modulo. Usato per scegliere le basi di Miller-Rabin.
+  // [NOTA — secondo giro di audit] Caso degenere max<=min: ritorna min
+  // senza errore. Comportamento definito e innocuo, mai in pratica raggiunto
+  // dalle chiamate reali del tool (sempre randomBigIntInRange(2n, n-2n) con
+  // n≥3, quindi max>min), ma documentato esplicitamente qui perché un audit
+  // esterno l'ha segnalato come privo di documentazione.
+  const range = max - min;
+  if(range <= 0n) return min;
+  const bitLen = range.toString(2).length;
+  const byteLen = Math.ceil(bitLen/8);
+  const excessBits = byteLen*8 - bitLen;
+  let candidate;
+  do{
+    const bytes = new Uint8Array(byteLen);
+    crypto.getRandomValues(bytes);
+    if(excessBits > 0) bytes[0] &= (0xFF >> excessBits);
+    candidate = BigInt('0x' + Array.from(bytes).map(b=>b.toString(16).padStart(2,'0')).join(''));
+  } while(candidate > range);
+  return min + candidate;
+}
+function isProbablePrime(n, rounds){
+  rounds = rounds || 40;
+  if(n < 2n) return false;
+  const trial = trialDivision(n);
+  if(trial !== null) return trial;
+  if(n % 2n === 0n) return false;
+  // [v1.0.0-beta1 → corretto prima della consegna] Basi scelte CASUALMENTE a
+  // ogni round (CSPRNG), non da un elenco fisso. Con basi fisse, un composito
+  // potrebbe in teoria essere costruito ad arte per risultare pseudo-primo
+  // proprio per quel set noto in anticipo (per questo FIPS 186-4/SP 800-89
+  // raccomandano basi casuali per la generazione di chiavi reali, non fisse).
+  // Basi fisse restano adatte a un autotest che deve solo confermare un fatto
+  // noto (un dato Carmichael è composito), non alla generazione di materiale
+  // crittografico reale — qui viene generato materiale reale, quindi casuali.
+  for(let i=0;i<rounds;i++){
+    const a = randomBigIntInRange(2n, n-2n);
+    if(!millerRabinRound(n,a)) return false;
+  }
+  return true;
+}
+
+
+"use strict";
+
+/* ============================== CONVERSIONI ============================== */
+function bytesToHex(bytes){ return Array.from(bytes).map(b=>b.toString(16).padStart(2,'0')).join(''); }
+function hexToBytesTolerant(hex){
+  hex = hex.replace(/0x/gi,'').replace(/[\s,:_-]/g,'');
+  if(hex.length===0) return new Uint8Array(0);
+  if(!/^[0-9a-fA-F]+$/.test(hex)) throw new Error('caratteri esadecimali non validi');
+  if(hex.length%2!==0) throw new Error('lunghezza esadecimale dispari');
+  const out = new Uint8Array(hex.length/2);
+  for(let i=0;i<out.length;i++) out[i]=parseInt(hex.substr(i*2,2),16);
+  return out;
+}
+function bitsFromBytes(bytes){ const out=[]; for(const b of bytes){ for(let i=7;i>=0;i--) out.push((b>>i)&1); } return out; }
+function bytesFromBits(bits){ const out=[]; for(let i=0;i+8<=bits.length;i+=8){ let v=0; for(let j=0;j<8;j++) v=(v<<1)|bits[i+j]; out.push(v); } return new Uint8Array(out); }
+function bytesToBigInt(bytes){ return BigInt('0x' + (bytesToHex(bytes) || '0')); }
+function bigIntToHex(n){ let h = n.toString(16); if(h.length%2) h='0'+h; return h; }
+
+/* ============================== PARSING TOLLERANTE (stesso schema degli altri 4 tool) ============================== */
+function parseByteListTolerant(str){
+  const tokens = str.trim().split(/[\s,;]+/).filter(Boolean);
+  if(tokens.length===0) return null;
+  const bytes = new Uint8Array(tokens.length);
+  for(let i=0;i<tokens.length;i++){
+    const t = tokens[i];
+    if(!/^(0x[0-9a-fA-F]+|\d{1,3})$/i.test(t)) return null;
+    const v = /^0x/i.test(t) ? parseInt(t,16) : parseInt(t,10);
+    if(Number.isNaN(v) || v<0 || v>255) return null;
+    bytes[i]=v;
+  }
+  return bytes;
+}
+function tolerantParse(raw){
+  const trimmed = (raw||'').trim();
+  if(!trimmed) return { ok:false, error:'vuoto' };
+  const compact = trimmed.replace(/\s+/g,'');
+  let bytes, format;
+  if(/^[01]+$/.test(compact)){
+    const bits = compact.split('').map(Number);
+    bytes = bytesFromBits(bits);
+    format = 'binario';
+  } else {
+    const byteList = parseByteListTolerant(trimmed);
+    if(byteList){ bytes = byteList; format = 'lista di byte'; }
+    else {
+      try{ bytes = hexToBytesTolerant(compact); format='esadecimale'; }
+      catch(e){ return { ok:false, error: 'Formato non riconosciuto: atteso binario (0/1), esadecimale, o lista di byte.' }; }
+    }
+  }
+  if(bytes.length===0) return { ok:false, error:'nessun byte valido estratto' };
+  return { ok:true, bytes, format };
+}
+
+
+
+/* ============================== STATO ============================== */
+const MIN_IKM_BYTES = 32; // almeno 256 bit di materiale in ingresso
+// [NUOVO — secondo giro di audit] Tetto sull'IKM incollato, per lo stesso
+// motivo del tetto già presente in entropy-crosscheck: un browser non deve
+// mai dover gestire un incolla di decine di MB senza un limite dichiarato,
+// indipendentemente da quanto sia economico l'HMAC-SHA256 sottostante.
+const MAX_IKM_BYTES = 5000000; // 5.000.000 byte, stesso valore già usato altrove nella serie
+let inputBytes = null;
+let currentPRK = null;
+
+function log(msg){
+  const box = document.getElementById('logBox');
+  const t = new Date().toISOString().split('T')[1].split('.')[0];
+  box.textContent += `[${t}] ${msg}\n`;
+  box.scrollTop = box.scrollHeight;
+}
+
+/* ============================== FASE 1: INPUT + ESTRAZIONE HKDF ============================== */
+async function parseAndExtract(){
+  const raw = document.getElementById('ikmInput').value;
+  const saltRaw = document.getElementById('saltInput').value.trim();
+  const statusEl = document.getElementById('ikmStatus');
+  const res = tolerantParse(raw);
+  if(!res.ok){
+    inputBytes = null; currentPRK = null;
+    statusEl.className = raw.trim() ? 'status fail' : 'status neutral';
+    statusEl.textContent = raw.trim() ? ('Errore: '+res.error) : 'In attesa dell\'output di uno dei tool di estrazione…';
+    disableDerivationButtons(true);
+    return;
+  }
+  if(res.bytes.length < MIN_IKM_BYTES){
+    inputBytes = null; currentPRK = null;
+    statusEl.className = 'status fail';
+    statusEl.textContent = `Servono almeno ${MIN_IKM_BYTES} byte (256 bit) di materiale in ingresso, forniti ${res.bytes.length}.`;
+    disableDerivationButtons(true);
+    return;
+  }
+  if(res.bytes.length > MAX_IKM_BYTES){
+    inputBytes = null; currentPRK = null;
+    statusEl.className = 'status fail';
+    statusEl.textContent = `Materiale in ingresso troppo grande (${res.bytes.length} byte, tetto ${MAX_IKM_BYTES}). L'output finale di un tool di estrazione non dovrebbe mai essere così grande — verifica di aver incollato il testo giusto.`;
+    disableDerivationButtons(true);
+    return;
+  }
+  let salt = new Uint8Array(0);
+  if(saltRaw){
+    try{ salt = hexToBytesTolerant(saltRaw.replace(/\s+/g,'')); }
+    catch(e){
+      statusEl.className = 'status fail';
+      statusEl.textContent = 'Salt non valido: atteso esadecimale.';
+      disableDerivationButtons(true);
+      return;
+    }
+  }
+  inputBytes = res.bytes;
+  currentPRK = await hkdfExtract(salt, inputBytes);
+  statusEl.className = 'status ok';
+  statusEl.textContent = `Formato: ${res.format} — ${res.bytes.length} byte letti. Salt: ${saltRaw ? saltRaw.length/2+' byte forniti' : 'nessuno (uso il default RFC 5869: 32 byte a zero)'}.\nPRK estratta (HKDF-Extract, HMAC-SHA256): ${bytesToHex(currentPRK)}`;
+  log(`Estrazione HKDF completata: ${res.bytes.length} byte di IKM, formato ${res.format}.`);
+  disableDerivationButtons(false);
+}
+function disableDerivationButtons(disabled){
+  ['btnDeriveSymmetric','btnDeriveX25519','btnDeriveEd25519','btnGenRsa'].forEach(id=>{
+    document.getElementById(id).disabled = disabled;
+  });
+}
+
+/* ============================== CHIAVI SIMMETRICHE ============================== */
+async function deriveSymmetric(){
+  const area = document.getElementById('symmetricArea');
+  const aesKey = await hkdfExpand(currentPRK, new TextEncoder().encode('entropy-key-format-v1-AES-256-KEY'), 32);
+  const hmacKey = await hkdfExpand(currentPRK, new TextEncoder().encode('entropy-key-format-v1-HMAC-SHA256-KEY'), 32);
+  area.className = 'status ok';
+  area.textContent =
+    `AES-256, chiave grezza (32 byte):\n${bytesToHex(aesKey)}\n\n` +
+    `HMAC-SHA256, chiave grezza (32 byte):\n${bytesToHex(hmacKey)}\n\n` +
+    `Derivate dalla STESSA PRK con etichette (info) diverse — mai la stessa chiave riusata per due scopi.`;
+  log('Chiavi simmetriche derivate (AES-256, HMAC-SHA256).');
+}
+
+/* ============================== SEED CURVE ELLITTICHE ============================== */
+async function deriveX25519(){
+  const area = document.getElementById('x25519Area');
+  const raw = await hkdfExpand(currentPRK, new TextEncoder().encode('entropy-key-format-v1-X25519-SEED'), 32);
+  const clamped = clampX25519(raw);
+  area.className = 'status ok';
+  area.textContent =
+    `Seed grezzo (32 byte, PRE-clamping):\n${bytesToHex(raw)}\n\n` +
+    `Scalare CLAMPED (RFC 7748 §5 — pronto per X25519):\n${bytesToHex(clamped)}\n\n` +
+    `Il clamping azzera i 3 bit bassi del primo byte, azzera il bit più alto e forza a 1 il secondo più alto dell'ultimo byte. Importa lo scalare clamped nella tua libreria X25519 (es. libsodium, OpenSSL) — questo tool non calcola la chiave pubblica.`;
+  log('Seed X25519 derivato e clampato (RFC 7748).');
+}
+async function deriveEd25519(){
+  const area = document.getElementById('ed25519Area');
+  const seed = await hkdfExpand(currentPRK, new TextEncoder().encode('entropy-key-format-v1-Ed25519-SEED'), 32);
+  area.className = 'status ok';
+  area.textContent =
+    `Seed Ed25519 (32 byte, NON clampato):\n${bytesToHex(seed)}\n\n` +
+    `Per Ed25519 il clamping avviene DENTRO l'algoritmo di keygen standard (dopo SHA-512 del seed) — questo tool consegna solo il seed grezzo. Importalo come seed in libsodium (crypto_sign_seed_keypair) o equivalente.`;
+  log('Seed Ed25519 derivato (non clampato — il clamping è interno al keygen standard).');
+}
+
+/* ============================== GENERAZIONE PRIMI RSA ============================== */
+async function generatePrimeFromPRK(prk, bits, labelPrefix, maxAttempts, mrRounds, progressCb){
+  const byteLen = bits/8;
+  for(let attempt=1; attempt<=maxAttempts; attempt++){
+    const info = new TextEncoder().encode(`entropy-key-format-v1-RSA-${labelPrefix}-candidate-${attempt}`);
+    const bytes = await hkdfExpand(prk, info, byteLen);
+    bytes[0] |= 0x80;             // garantisce la lunghezza esatta in bit
+    bytes[byteLen-1] |= 1;        // dispari
+    const cand = bytesToBigInt(bytes);
+    if(isProbablePrime(cand, mrRounds)) return { prime: cand, attempts: attempt };
+    if(progressCb && attempt % 25 === 0){ progressCb(attempt); await new Promise(r=>setTimeout(r,0)); }
+  }
+  throw new Error(`Nessun primo trovato in ${maxAttempts} tentativi`);
+}
+async function generateRsaPrimes(){
+  const modBits = parseInt(document.getElementById('rsaBitsSelect').value,10);
+  const area = document.getElementById('rsaArea');
+  // [NUOVO — trovato da un audit esterno, secondo giro] Il valore arriva da
+  // una <select> con solo 3 opzioni valide nell'HTML, ma nulla impedisce a
+  // un DOM manomesso (DevTools, o una pagina modificata) di forzare un
+  // valore fuori whitelist — es. 512 bit (chiave debole) o 100000 bit
+  // (calcolo impraticabile, rischio di bloccare la scheda). Stesso principio
+  // già applicato in entropy-crosscheck: mai un calcolo che scala con
+  // l'input senza un tetto esplicito e dichiarato.
+  const ALLOWED_RSA_BITS = [2048, 3072, 4096];
+  if(!ALLOWED_RSA_BITS.includes(modBits)){
+    area.className = 'status fail';
+    area.textContent = `Dimensione modulo non valida (${modBits}). Valori consentiti: ${ALLOWED_RSA_BITS.join(', ')} bit.`;
+    log(`Generazione RSA rifiutata: dimensione modulo fuori whitelist (${modBits}).`);
+    return;
+  }
+  const primeBits = modBits/2;
+  const btn = document.getElementById('btnGenRsa');
+  area.className = 'status warn';
+  area.textContent = `⏳ Calcolo in corso… ricerca di due primi da ${primeBits} bit (RSA-${modBits}). Può richiedere alcuni secondi.`;
+  btn.disabled = true;
+  const prevLabel = btn.textContent; btn.textContent = '⏳ Calcolo in corso…';
+  await new Promise(r=>setTimeout(r,0));
+  const t0 = Date.now();
+  try{
+    const progress = (n)=>{ area.textContent = `⏳ Calcolo in corso… primo p: ${n} candidati testati finora.`; };
+    const p = await generatePrimeFromPRK(currentPRK, primeBits, 'p', 20000, 40, progress);
+    const q = await generatePrimeFromPRK(currentPRK, primeBits, 'q', 20000, 40, (n)=>{ area.textContent = `⏳ Calcolo in corso… p trovato. primo q: ${n} candidati testati finora.`; });
+    const n = p.prime * q.prime;
+    const dt = Date.now()-t0;
+    area.className = 'status ok';
+    area.textContent =
+      `p (${primeBits} bit, ${p.attempts} candidati testati):\n${bigIntToHex(p.prime)}\n\n` +
+      `q (${primeBits} bit, ${q.attempts} candidati testati):\n${bigIntToHex(q.prime)}\n\n` +
+      `n = p×q (modulo RSA-${modBits}):\n${bigIntToHex(n)}\n\n` +
+      `Tempo: ${(dt/1000).toFixed(2)}s. p e q derivati dalla stessa PRK con candidati progressivi mai riusati fra loro. ` +
+      `Manca ancora: calcolo di φ(n), scelta di e (tipicamente 65537), calcolo di d — usa OpenSSL/libreria RSA della tua fiducia con questi p, q come input, non tool artigianali per quel passo.`;
+    log(`RSA-${modBits}: p e q generati (${p.attempts}+${q.attempts} candidati, ${(dt/1000).toFixed(2)}s).`);
+  } catch(e){
+    area.className = 'status fail';
+    area.textContent = 'Errore nella generazione dei primi: ' + e.message;
+    log('Errore generazione RSA: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = prevLabel;
+  }
+}
+
+
+/* ============================== AUTOTEST ALL'AVVIO ============================== */
+async function runSelfTests(){
+  const results = [];
+  function check(name, cond){ results.push({name, pass: !!cond}); }
+
+  // 1. RFC 5869 — vettori ufficiali (valori attesi verificati indipendentemente
+  // contro crypto.hkdfSync di Node.js prima di essere inseriti qui come costanti)
+  const okm1 = await hkdf(
+    hexToBytesTolerant('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b'),
+    hexToBytesTolerant('000102030405060708090a0b0c'),
+    hexToBytesTolerant('f0f1f2f3f4f5f6f7f8f9'), 42);
+  check('HKDF RFC 5869 Test Case 1', bytesToHex(okm1.okm) === '3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865');
+
+  const okm3 = await hkdf(
+    hexToBytesTolerant('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b'),
+    new Uint8Array(0), new Uint8Array(0), 42);
+  check('HKDF RFC 5869 Test Case 3 (senza salt/info)', bytesToHex(okm3.okm) === '8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d9d201395faa4b61a96c8');
+
+  // 2. Clamping X25519 — proprietà RFC 7748 §5 su 100 array casuali
+  let clampOk = true;
+  for(let t=0;t<100;t++){
+    const raw = new Uint8Array(32); crypto.getRandomValues(raw);
+    const c = clampX25519(raw);
+    if((c[0]&0b111)!==0 || (c[31]&0b10000000)!==0 || (c[31]&0b01000000)===0){ clampOk=false; break; }
+  }
+  check('Clamping X25519 — proprietà RFC 7748 (100 prove)', clampOk);
+
+  // Vettore ufficiale RFC 7748 §6.1 (Diffie-Hellman, scalare privato di Alice)
+  // — scaricato da rfc-editor.org e confrontato con lo pseudocodice ufficiale
+  // decodeScalar25519 prima di essere imbarcato qui come costante.
+  const aliceRaw = hexToBytesTolerant('77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a');
+  const aliceClamped = bytesToHex(clampX25519(aliceRaw));
+  check('Clamping X25519 — vettore ufficiale RFC 7748 §6.1', aliceClamped === '70076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c6a');
+
+  // 3. Miller-Rabin — numeri di Carmichael (devono risultare compositi)
+  const carmichael = [561n,1105n,1729n,2465n,2821n,6601n,8911n];
+  check('Miller-Rabin rileva i numeri di Carmichael come compositi', carmichael.every(c=>!isProbablePrime(c,20)));
+
+  // 4. Miller-Rabin — primi noti
+  const knownPrimes = [2n,3n,97n,7919n,999999937n];
+  check('Miller-Rabin riconosce primi noti', knownPrimes.every(p=>isProbablePrime(p,20)));
+
+  // 5. Miller-Rabin — compositi ovvi
+  const composites = [4n,100n,999999999999n];
+  check('Miller-Rabin riconosce compositi ovvi', composites.every(c=>!isProbablePrime(c,20)));
+
+  // 6. Generazione reale di un primo a 256 bit con CSPRNG, entro un limite di tentativi ragionevole
+  const testPrk = await hkdfExtract(new Uint8Array(0), crypto.getRandomValues(new Uint8Array(32)));
+  let realPrimeOk = false;
+  try{
+    const r = await generatePrimeFromPRK(testPrk, 256, 'selftest', 2000, 20, null);
+    realPrimeOk = isProbablePrime(r.prime, 40);
+  } catch(e){ realPrimeOk = false; }
+  check('Generazione reale di un primo a 256 bit via HKDF+Miller-Rabin', realPrimeOk);
+
+  // 7. Domain separation: due derivazioni con info diversa dalla stessa PRK devono differire
+  const outA = await hkdfExpand(testPrk, new TextEncoder().encode('test-A'), 32);
+  const outB = await hkdfExpand(testPrk, new TextEncoder().encode('test-B'), 32);
+  check('Separazione di dominio: info diversa → output diversi', bytesToHex(outA) !== bytesToHex(outB));
+
+  const failed = results.filter(r=>!r.pass);
+  const area = document.getElementById('selfTestArea');
+  const rows = results.map(r=>`${r.pass?'✓':'✗ FALLITO'} ${r.name}`).join('\n');
+  area.className = failed.length ? 'status fail' : 'status ok';
+  area.textContent = (failed.length? `⚠ ${failed.length} controlli falliti su ${results.length}\n\n` : `✓ Tutti i ${results.length} controlli superati\n\n`) + rows;
+}
+
+/* ============================== INTEGRITÀ APPLICAZIONE ============================== */
+async function computeCoreIntegrityHash(){
+  const scriptEl = document.getElementById('core-script');
+  const data = new TextEncoder().encode(scriptEl.textContent);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hashBuffer)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+/* ============================== INIT ============================== */
+document.getElementById('btnExtract').addEventListener('click', parseAndExtract);
+document.getElementById('btnDeriveSymmetric').addEventListener('click', deriveSymmetric);
+document.getElementById('btnDeriveX25519').addEventListener('click', deriveX25519);
+document.getElementById('btnDeriveEd25519').addEventListener('click', deriveEd25519);
+document.getElementById('btnGenRsa').addEventListener('click', generateRsaPrimes);
+disableDerivationButtons(true);
+
+runSelfTests();
+computeCoreIntegrityHash().then(hex=>{ document.getElementById('coreFingerprint').textContent = hex; });
+
+</script>
+</body>
+</html>

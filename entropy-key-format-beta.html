@@ -427,7 +427,7 @@ async function generatePrimeFromPRK(prk, bits, labelPrefix, maxAttempts, mrRound
   for(let attempt=1; attempt<=maxAttempts; attempt++){
     const info = new TextEncoder().encode(`entropy-key-format-v1-RSA-${labelPrefix}-candidate-${attempt}`);
     const bytes = await hkdfExpand(prk, info, byteLen);
-    bytes[0] |= 0x80;             // garantisce la lunghezza esatta in bit
+    bytes[0] |= 0xC0;             // FIX: forza i DUE bit piu alti, non uno solo (bug audit indipendente 26/09/2026 - con un solo bit il prodotto p*q puo risultare 1 bit piu corto del dichiarato)
     bytes[byteLen-1] |= 1;        // dispari
     const cand = bytesToBigInt(bytes);
     if(isProbablePrime(cand, mrRounds)) return { prime: cand, attempts: attempt };

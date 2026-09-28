@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.0.0-beta3 (2026-09-28) — correzione della lunghezza delle chiavi RSA
+
+SHA-256 di `entropy-key-format-beta.html`:
+`9af699dec3332402513135724bb59852a5538d708553f2ab019a35128ed1360d`.
+
+**Correzione: moduli RSA da 2047 bit invece di 2048 (26/09/2026, commit 245e424).** Bug segnalato da un audit indipendente: nella generazione dei primi p e q veniva forzato un solo bit alto (`0x80`) invece dei due bit alti (`0xC0`). Il prodotto di due primi con un solo bit alto forzato può risultare di 2047 bit: nel 35-40% dei casi le chiavi "RSA-2048" erano in realtà da 2047 bit. Il difetto non indeboliva la casualità, ma la lunghezza dichiarata non veniva rispettata. Corretto forzando i due bit alti (`0x80` → `0xC0`), così il prodotto ha sempre 2048 bit. Verificato generando 20 chiavi per versione: prima della correzione 12 su 20 erano a 2048 bit (il 40% troppo corte); dopo la correzione 20 su 20.
+
+**Aggiornamento dell'etichetta di build (28/09/2026).** Il titolo della pagina e la riga di intestazione sono stati portati da `v1.0.0-beta2` (2026-09-15) a `v1.0.0-beta3` (2026-09-28), e nella riga di intestazione è stata tolta la frase "non ancora pubblicata su GitHub", ormai superata: il repository è pubblicato dal 15/09/2026. La dicitura "BETA NON AUDITATA" è rimasta invariata. Oltre alla correzione sopra e all'etichetta, nessun'altra riga è cambiata. Lo SHA-256 in cima a questa voce si riferisce alla pagina con la nuova etichetta.
+
 ## v1.0.0-beta2 (2026-09-15) — risposta al secondo giro di audit
 
 SHA-256 di `entropy-key-format-beta.html`:
